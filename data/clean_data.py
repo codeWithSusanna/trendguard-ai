@@ -1,207 +1,127 @@
 """
-clean_data.py
-Cleans three medical datasets: Kidney Disease, Stroke, and Indian Liver Patient (ILPD).
+Cleans four medical CSV datasets (breast cancer, dengue, thyroid, asthma/symptom).
+Originals are read-only inputs; cleaned copies are written to OUTPUT_DIR.
 
-Inputs (read-only, never modified):
-    /mnt/user-data/uploads/kidney_disease.csv
-    /mnt/user-data/uploads/healthcare-dataset-stroke-data.csv
-    /mnt/user-data/uploads/Indian_Liver_Patient_Dataset__ILPD_.csv
-
-Outputs:
-    /mnt/user-data/outputs/kidney_disease_cleaned.csv
-    /mnt/user-data/outputs/stroke_data_cleaned.csv
-    /mnt/user-data/outputs/liver_patient_cleaned.csv
+Run: python3 clean_data.py
 """
-
 import pandas as pd
-from sklearn.model_selection import train_test_split
-from sklearn.utils import resample
 
 IN_DIR = "/mnt/user-data/uploads"
 OUT_DIR = "/mnt/user-data/outputs"
 
 
-def banner(title):
-    print("\n" + "=" * 72)
-    print(title)
-    print("=" * 72)
+def report(name, before, after, missing_before, missing_after, dup_before, dup_after, class_col=None):
+    print(f"\n=== {name} ===")
+    print(f"Shape: {before} -> {after}")
+    print(f"Missing values (total): {missing_before} -> {missing_after}")
+    print(f"Duplicate rows: {dup_before} -> {dup_after}")
+    if class_col is not None:
+        print(f"Class distribution ({class_col.name}):")
+        print(class_col.to_string())
 
 
-# =========================================================================
-# 1. KIDNEY DISEASE
-# =========================================================================
-def clean_kidney():
-    banner("KIDNEY DISEASE DATASET")
-    df = pd.read_csv(f"{IN_DIR}/kidney_disease.csv")
+# ---------------------------------------------------------------------------
+# 1. CANCER dataset
+# ---------------------------------------------------------------------------
+cancer = pd.read_csv(f"{IN_DIR}/Cancer_Data.csv")
+before_shape, before_na, before_dup = cancer.shape, cancer.isna().sum().sum(), cancer.duplicated().sum()
 
-    print(f"BEFORE  shape={df.shape}  missing_total={df.isnull().sum().sum()}  "
-          f"duplicates={df.duplicated().sum()}")
-    print("Class distribution BEFORE (raw, uncleaned labels):")
-    print(df["classification"].value_counts(dropna=False).to_string())
+# 'Unnamed: 32' is 100% empty (artifact of a trailing comma in the source file) -> drop.
+# 'id' is a unique identifier, not a feature -> kept for traceability, not used as a feature.
+cancer_clean = cancer.drop(columns=["Unnamed: 32"])
+cancer_clean = cancer_clean.drop_duplicates()  # none expected, safety check
+assert cancer_clean["id"].is_unique, "Duplicate patient IDs found in cancer data"
 
-    cat_cols = ["rbc", "pc", "pcc", "ba", "htn", "dm", "cad", "appet", "pe", "ane",
-                "classification"]
-    numeric_as_text_cols = ["pcv", "wc", "rc"]           # numeric cols stored as text
-    numeric_cols = ["age", "bp", "sg", "al", "su", "bgr", "bu", "sc", "sod", "pot", "hemo"]
-
-    # --- Fix inconsistent values: strip stray whitespace/tabs, normalize '?' -> NaN ---
-    for c in cat_cols + numeric_as_text_cols:
-        df[c] = df[c].astype("string").str.strip()
-        df[c] = df[c].replace({"?": pd.NA, "": pd.NA})
-
-    # pcv/wc/rc are numeric but were read as text because of stray '?'/tabs
-    for c in numeric_as_text_cols:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-        numeric_cols.append(c)
-
-    # --- Duplicates: drop exact duplicate patient records (ignore id) ---
-    dup_mask = df.drop(columns=["id"]).duplicated()
-    df = df.loc[~dup_mask].reset_index(drop=True)
-
-    # --- Missing values: median for numeric (robust to outliers), mode for categorical ---
-    for c in numeric_cols:
-        df[c] = df[c].fillna(df[c].median())
-    for c in cat_cols:
-        df[c] = df[c].fillna(df[c].mode(dropna=True)[0])
-
-    # --- Encoding: map clean binary/categorical text to 0/1 ---
-    enc_maps = {
-        "rbc": {"normal": 1, "abnormal": 0},
-        "pc": {"normal": 1, "abnormal": 0},
-        "pcc": {"present": 1, "notpresent": 0},
-        "ba": {"present": 1, "notpresent": 0},
-        "htn": {"yes": 1, "no": 0},
-        "dm": {"yes": 1, "no": 0},
-        "cad": {"yes": 1, "no": 0},
-        "appet": {"good": 1, "poor": 0},
-        "pe": {"yes": 1, "no": 0},
-        "ane": {"yes": 1, "no": 0},
-        "classification": {"ckd": 1, "notckd": 0},
-    }
-    for c, m in enc_maps.items():
-        df[c] = df[c].map(m).astype(int)
-
-    # --- Data types: whole-count measurements -> int, decimal measurements -> float ---
-    int_cols = ["age", "bp", "al", "su", "bgr", "pcv", "wc"]
-    float_cols = ["sg", "bu", "sc", "sod", "pot", "hemo", "rc"]
-    for c in int_cols:
-        df[c] = df[c].round().astype(int)
-    for c in float_cols:
-        df[c] = df[c].astype(float)
-
-    print(f"\nAFTER   shape={df.shape}  missing_total={df.isnull().sum().sum()}  "
-          f"duplicates={df.drop(columns=['id']).duplicated().sum()}")
-    print("Class distribution AFTER (1=ckd, 0=notckd):")
-    print(df["classification"].value_counts().to_string())
-
-    out_path = f"{OUT_DIR}/kidney_disease_cleaned.csv"
-    df.to_csv(out_path, index=False)
-    print(f"Saved -> {out_path}")
-    return df
+after_shape = cancer_clean.shape
+after_na = cancer_clean.isna().sum().sum()
+after_dup = cancer_clean.duplicated().sum()
+report("Cancer_Data.csv", before_shape, after_shape, before_na, after_na, before_dup, after_dup,
+       cancer_clean["diagnosis"].value_counts())
+cancer_clean.to_csv(f"{OUT_DIR}/cancer_cleaned.csv", index=False)
 
 
-# =========================================================================
-# 2. STROKE
-# =========================================================================
-def clean_stroke():
-    banner("STROKE DATASET")
-    df = pd.read_csv(f"{IN_DIR}/healthcare-dataset-stroke-data.csv")
+# ---------------------------------------------------------------------------
+# 2. DENGUE dataset
+# ---------------------------------------------------------------------------
+dengue = pd.read_csv(f"{IN_DIR}/Dengue_diseases_dataset_modified__1_.csv")
+before_shape, before_na, before_dup = dengue.shape, dengue.isna().sum().sum(), dengue.duplicated().sum()
 
-    print(f"BEFORE  shape={df.shape}  missing_total={df.isnull().sum().sum()}  "
-          f"duplicates={df.duplicated().sum()}")
-    print("Missing by column (BEFORE):")
-    print(df.isnull().sum()[df.isnull().sum() > 0].to_string())
-    print("Class distribution BEFORE:")
-    print(df["stroke"].value_counts().to_string())
+dengue_clean = dengue.drop_duplicates().copy()
 
-    # --- Duplicates ---
-    df = df.drop_duplicates().reset_index(drop=True)
+# Missing lab values (wbc_count, platelet_count, platelet_distribution_width) are <2.5% of
+# rows each and numeric/skewed -> median imputation (per dengue_label group) preserves the
+# distribution without discarding otherwise-valid patient records or inventing extreme values.
+lab_cols = ["wbc_count", "platelet_count", "platelet_distribution_width"]
+for col in lab_cols:
+    dengue_clean[col] = dengue_clean.groupby("dengue_label")[col].transform(lambda s: s.fillna(s.median()))
 
-    # --- Missing values: bmi is the only column with nulls -> median imputation.
-    # age is intentionally left as float: this dataset records fractional ages
-    # (e.g. 0.08, 1.32) for infants/toddlers, so rounding would corrupt valid data.
-    df["bmi"] = df["bmi"].fillna(df["bmi"].median())
+# 'gender' has a valid third category 'Child' (pediatric patients) in addition to Male/Female -> kept as-is.
+# 'rbc_count' and 'differential_count' are stored as 0/1 flags rather than the continuous
+# measurements described in the data dictionary. This looks like an upstream encoding issue,
+# but the values are internally consistent (no NaNs/negatives), so they are left untouched
+# rather than guessed/rewritten, and flagged in this report instead.
 
-    print(f"\nAFTER   shape={df.shape}  missing_total={df.isnull().sum().sum()}  "
-          f"duplicates={df.duplicated().sum()}")
-
-    out_path = f"{OUT_DIR}/stroke_data_cleaned.csv"
-    df.to_csv(out_path, index=False)
-    print(f"Saved -> {out_path}")
-
-    # --- Class imbalance: demonstrate correct, leakage-free handling ---
-    # Split BEFORE any resampling; resample ONLY the training partition.
-    X = df.drop(columns=["id", "stroke"])
-    y = df["stroke"]
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, stratify=y, random_state=42
-    )
-    print("\nClass imbalance handling (demonstration, not baked into the saved CSV):")
-    print("  Train BEFORE resampling:", y_train.value_counts().to_dict())
-    print("  Test  (untouched)      :", y_test.value_counts().to_dict())
-
-    train_df = pd.concat([X_train, y_train], axis=1)
-    majority = train_df[train_df["stroke"] == 0]
-    minority = train_df[train_df["stroke"] == 1]
-    minority_upsampled = resample(
-        minority, replace=True, n_samples=len(majority), random_state=42
-    )
-    train_balanced = pd.concat([majority, minority_upsampled])
-    print("  Train AFTER oversampling minority class:",
-          train_balanced["stroke"].value_counts().to_dict())
-    print("  (Test set distribution is left unchanged to reflect real-world imbalance.)")
-
-    return df
+after_shape = dengue_clean.shape
+after_na = dengue_clean.isna().sum().sum()
+after_dup = dengue_clean.duplicated().sum()
+report("Dengue_diseases_dataset_modified__1_.csv", before_shape, after_shape, before_na, after_na,
+       before_dup, after_dup, dengue_clean["dengue_label"].value_counts())
+print("NOTE: rbc_count/differential_count are binary (0/1) in the source file, not counts as")
+print("      described in the data dictionary. Left as-is (not guessed) - flag for data owner.")
+dengue_clean.to_csv(f"{OUT_DIR}/dengue_cleaned.csv", index=False)
 
 
-# =========================================================================
-# 3. LIVER (ILPD)
-# =========================================================================
-def clean_liver():
-    banner("LIVER (ILPD) DATASET")
+# ---------------------------------------------------------------------------
+# 3. THYROID dataset
+# ---------------------------------------------------------------------------
+thyroid = pd.read_csv(f"{IN_DIR}/Thyroid-Dataset.csv")
+before_shape, before_na, before_dup = thyroid.shape, thyroid.isna().sum().sum(), thyroid.duplicated().sum()
 
-    # Headers in the raw file are actually the first data row (corrupted header).
-    # Verified column order (UCI ILPD documentation): Age, Gender, Total_Bilirubin,
-    # Direct_Bilirubin, Alkaline_Phosphotase, Alamine_Aminotransferase,
-    # Aspartate_Aminotransferase, Total_Protiens, Albumin,
-    # Albumin_and_Globulin_Ratio, Dataset (1=liver patient, 2=not).
-    cols = ["Age", "Gender", "Total_Bilirubin", "Direct_Bilirubin", "Alkaline_Phosphotase",
-            "Alamine_Aminotransferase", "Aspartate_Aminotransferase", "Total_Protiens",
-            "Albumin", "Albumin_and_Globulin_Ratio", "Dataset"]
-    df = pd.read_csv(f"{IN_DIR}/Indian_Liver_Patient_Dataset__ILPD_.csv",
-                      header=None, names=cols)
+thyroid_clean = thyroid.drop_duplicates().copy()  # 102 exact duplicate patient rows
 
-    print(f"BEFORE  shape={df.shape}  missing_total={df.isnull().sum().sum()}  "
-          f"duplicates={df.duplicated().sum()}")
-    print("Class distribution BEFORE (1=liver patient, 2=not):")
-    print(df["Dataset"].value_counts().to_string())
+# A handful of 'age' values are biologically impossible (e.g. 455, 65511, 65526 - integer
+# overflow/typo artifacts), unlike the rest of the column (1-97, all plausible). These rows
+# are removed as corrupted records rather than guessed at; every other row is preserved.
+invalid_age = thyroid_clean["age"] > 120
+n_invalid_age = invalid_age.sum()
+thyroid_clean = thyroid_clean[~invalid_age]
 
-    # --- Duplicates: drop exact duplicate patient records ---
-    df = df.drop_duplicates().reset_index(drop=True)
+# 'sex' and the lab values (TSH, T3, TT4, T4U, FTI) are left as NaN when missing: these are
+# clinical measurements/attributes that cannot be reliably inferred, and imputing them would
+# mean fabricating patient data. Missingness is preserved rather than guessed or dropped.
 
-    # --- Missing values: only Albumin_and_Globulin_Ratio has nulls -> median impute ---
-    df["Albumin_and_Globulin_Ratio"] = df["Albumin_and_Globulin_Ratio"].fillna(
-        df["Albumin_and_Globulin_Ratio"].median()
-    )
-
-    # --- Gender: already consistent (Male/Female); light normalization for safety ---
-    df["Gender"] = df["Gender"].astype("string").str.strip().str.title()
-
-    print(f"\nAFTER   shape={df.shape}  missing_total={df.isnull().sum().sum()}  "
-          f"duplicates={df.duplicated().sum()}")
-    print("Class distribution AFTER:")
-    print(df["Dataset"].value_counts().to_string())
-
-    out_path = f"{OUT_DIR}/liver_patient_cleaned.csv"
-    df.to_csv(out_path, index=False)
-    print(f"Saved -> {out_path}")
-    return df
+after_shape = thyroid_clean.shape
+after_na = thyroid_clean.isna().sum().sum()
+after_dup = thyroid_clean.duplicated().sum()
+report("Thyroid-Dataset.csv", before_shape, after_shape, before_na, after_na, before_dup, after_dup,
+       thyroid_clean["class"].value_counts())
+print(f"NOTE: removed {n_invalid_age} rows with impossible age values (>120 years).")
+print("Missing counts kept (not imputed):")
+print(thyroid_clean.isna().sum()[thyroid_clean.isna().sum() > 0].to_string())
+thyroid_clean.to_csv(f"{OUT_DIR}/thyroid_cleaned.csv", index=False)
 
 
-if __name__ == "__main__":
-    import os
-    os.makedirs(OUT_DIR, exist_ok=True)
-    kidney = clean_kidney()
-    stroke = clean_stroke()
-    liver = clean_liver()
-    banner("DONE")
+# ---------------------------------------------------------------------------
+# 4. ASTHMA / symptom-severity dataset (processed-data.csv)
+# ---------------------------------------------------------------------------
+asthma = pd.read_csv(f"{IN_DIR}/processed-data.csv")
+before_shape, before_na, before_dup = asthma.shape, asthma.isna().sum().sum(), asthma.duplicated().sum()
+
+# This is a fully binary/one-hot encoded symptom-severity dataset with only 5,760 distinct
+# symptom combinations, each repeated exactly 55 times in the raw file. The repeats carry no
+# extra information (same feature vector -> same label every time) and would bias any model
+# trained on it toward these exact duplicate rows, so exact duplicates are dropped, keeping
+# one row per unique combination.
+asthma_clean = asthma.drop_duplicates().copy()
+
+after_shape = asthma_clean.shape
+after_na = asthma_clean.isna().sum().sum()
+after_dup = asthma_clean.duplicated().sum()
+sev_cols = ["Severity_None", "Severity_Mild", "Severity_Moderate"]
+sev_dist = asthma_clean[sev_cols].sum()
+sev_dist.name = "count"
+report("processed-data.csv (asthma/symptom severity)", before_shape, after_shape, before_na, after_na,
+       before_dup, after_dup, sev_dist)
+asthma_clean.to_csv(f"{OUT_DIR}/asthma_cleaned.csv", index=False)
+
+print("\nAll cleaned files written to", OUT_DIR)
